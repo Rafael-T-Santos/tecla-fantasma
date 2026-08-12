@@ -13,9 +13,20 @@
 #>
 
 param(
+    [ValidateSet("nano", "uno", "mega")]
+    [string]$Placa = "nano",
     [string]$Porta,
     [switch]$SoCompilar
 )
+
+# Uno e Mega usam ATmega16u2 como ponte USB: o Windows reconhece nativamente,
+# sem driver. Nano clone usa CH340 e tem duas variantes de bootloader, por isso
+# so ele tem uma segunda tentativa.
+$FQBNS = @{
+    "nano" = @("arduino:avr:nano", "arduino:avr:nano:cpu=atmega328old")
+    "uno"  = @("arduino:avr:uno")
+    "mega" = @("arduino:avr:mega:cpu=atmega2560")
+}
 
 $ErrorActionPreference = "Stop"
 
@@ -66,8 +77,10 @@ function Find-Porta($cli) {
 $cli = Get-ArduinoCli
 Write-Host "arduino-cli: $cli"
 
-Write-Host "`nCompilando..."
-& $cli compile --fqbn arduino:avr:nano $SKETCH
+$tentativas = $FQBNS[$Placa]
+
+Write-Host "`nCompilando para $Placa..."
+& $cli compile --fqbn $tentativas[0] $SKETCH
 if ($LASTEXITCODE -ne 0) { Erro "falhou compilar - veja os erros acima." }
 Write-Host "compilou ok" -ForegroundColor Green
 
@@ -89,7 +102,7 @@ if ($daemon) {
     Write-Host "      Ele segura a $Porta aberta e o upload vai falhar. Fecha ele antes." -ForegroundColor Yellow
 }
 
-foreach ($fqbn in @("arduino:avr:nano", "arduino:avr:nano:cpu=atmega328old")) {
+foreach ($fqbn in $tentativas) {
     Write-Host "`nGravando em $Porta  [$fqbn]"
     & $cli upload -p $Porta --fqbn $fqbn $SKETCH
     if ($LASTEXITCODE -eq 0) {
@@ -100,5 +113,5 @@ foreach ($fqbn in @("arduino:avr:nano", "arduino:avr:nano:cpu=atmega328old")) {
     Write-Host "  falhou com $fqbn" -ForegroundColor Yellow
 }
 
-Erro "nao gravou com nenhum dos dois bootloaders. Confere o cabo (tem cabo USB que so da carga, sem dados) e se a $Porta esta livre."
+Erro "nao gravou em $Porta. Confere se a porta esta livre (o daemon segura ela) e se o cabo transfere dados."
 

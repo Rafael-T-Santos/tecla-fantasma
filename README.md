@@ -52,10 +52,14 @@ Pra gravar:
 winget install ArduinoSA.CLI          # uma vez
 arduino-cli core install arduino:avr  # uma vez, ~200 MB
 
-.\gravar.ps1                          # detecta a porta e grava
-.\gravar.ps1 -Porta COM7              # ou força uma porta
+.\gravar.ps1                          # Nano, detecta a porta e grava
+.\gravar.ps1 -Placa uno               # ou uno / mega
+.\gravar.ps1 -Porta COM7              # força uma porta
 .\gravar.ps1 -SoCompilar              # só compila, sem placa plugada
 ```
+
+Rode do **PowerShell**, não do `cmd` — o `cmd` não executa `.ps1`, ele abre o
+arquivo no editor.
 
 Depois é só rodar o daemon — ele acha a porta COM sozinho pelo VID do chip
 USB-serial.
