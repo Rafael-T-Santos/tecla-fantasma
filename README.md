@@ -90,6 +90,54 @@ ATmega32u4 (Pro Micro / Leonardo) ou um ESP32-S3.
 > Verificado em Ubuntu 24.04.4, GNOME 46 no Wayland, teclado ABNT2 (layout
 > `br`), com Uno clone (CH340). O botão físico funciona ponta a ponta.
 
+### Do zero, na ordem
+
+```bash
+git clone https://github.com/Rafael-T-Santos/tecla-fantasma.git
+cd tecla-fantasma
+./instalar-linux.sh            # deps, grupos, udev, env, autostart
+```
+
+**Faça logout/login agora.** Grupo novo (`uinput`, `dialout`) não vale na
+sessão atual, e abrir outro terminal não resolve.
+
+De volta, confira o mapa de teclas **antes de qualquer outra coisa** — é onde
+se descobre se o layout foi detectado certo:
+
+```bash
+python3 injetor.py             # '?' tem que sair em keycode 89, mods [42]
+systemctl --user status tecla-fantasma
+```
+
+Só isso já dá o `?`. O que vem depois é opcional:
+
+| Quero | Faça |
+|---|---|
+| Botão físico | grave a placa: `./gravar.sh -p uno -m` |
+| Alexa | passos 1–4 abaixo, mais o `PC_HOSTS` no `config.h` |
+| Atalho de teclado | veja *Atalho global no Wayland* — não resolvido |
+
+Para a Alexa, o IP desta máquina:
+
+```bash
+hostname -I | awk '{print $1}'
+```
+
+Coloque no `PC_HOSTS` do `config.h`. Ele aceita **vários IPs** — o ESP tenta um
+por um e usa o primeiro que responder, começando pelo que funcionou da última
+vez. Assim dá pra alternar entre máquinas sem regravar o firmware:
+
+```c
+#define PC_HOSTS {"192.168.0.190", "192.168.0.185"}   // linux, windows
+```
+
+```bash
+sudo ufw allow from 192.168.0.0/24 to any port 8127 proto tcp
+nano ~/.config/tecla-fantasma.env       # descomente HOST e TOKEN
+systemctl --user restart tecla-fantasma
+./gravar.sh -p nodemcu -m               # grava o firmware da Alexa
+```
+
 No Windows o `SendInput` entrega o **caractere** e o layout não importa. No
 Linux não existe equivalente: no Wayland, injetar em outra janela é
 justamente o que o protocolo impede, e a única saída é `/dev/uinput` — um
@@ -242,8 +290,9 @@ Fica em aberto. Não é bloqueante: o botão físico é o uso diário.
 
 ## Alexa (NodeMCU / ESP8266)
 
-> ⚠️ O firmware **compila** (295 KB, 28% do flash) mas ainda não foi testado
-> com uma Alexa de verdade.
+> Funcionando ponta a ponta no Windows, com NodeMCU (CP2102) e Echo na mesma
+> rede. No Linux o caminho é o mesmo — só muda o IP em `PC_HOSTS` — mas ainda
+> não foi validado lá.
 
 O ESP se anuncia na rede como uma lâmpada Philips Hue. A Alexa descobre lâmpada
 Hue sozinha — sem skill, sem conta, sem cadastro. Você diz *"Alexa, ligar
@@ -305,9 +354,19 @@ fica mandando GET pro vazio — falha silenciosa, chata de diagnosticar.
 
 ```powershell
 Copy-Item alexa_interrogacao\config.h.exemplo alexa_interrogacao\config.h
-# preencha wifi, IP do PC e o mesmo token
-.\gravar.ps1 -Placa nodemcu
+# preencha wifi, PC_HOSTS e o mesmo token
+.\gravar.ps1 -Placa nodemcu -Monitor
 ```
+
+```bash
+cp alexa_interrogacao/config.h.exemplo alexa_interrogacao/config.h
+./gravar.sh -p nodemcu -m
+```
+
+`PC_HOSTS` aceita mais de um IP: `{"192.168.0.190", "192.168.0.185"}`. O ESP
+tenta um por um e usa o primeiro que responder, começando pelo que funcionou da
+última vez — então dá pra alternar entre Linux e Windows sem regravar, e o
+timeout da máquina desligada só é pago na primeira acionada depois da troca.
 
 O `config.h` está no `.gitignore` — ele carrega a senha do seu wifi e o token,
 e este repositório é público.
@@ -351,6 +410,6 @@ alguém determinado dentro da rede.
 
 - [x] Injetor + atalho global (o atalho só no Windows — veja a seção Linux)
 - [x] Botão físico via serial (Arduino Nano/Uno)
-- [x] Alexa via NodeMCU — compila; falta testar com uma Alexa de verdade
+- [x] Alexa via NodeMCU — funcionando no Windows; no Linux falta validar
 - [ ] Gesto pela webcam — por último. Falso positivo em gesto é fatal: você
       gesticula falando ao telefone e aparecem `?????` no documento.

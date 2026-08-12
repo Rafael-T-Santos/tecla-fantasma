@@ -1,0 +1,19 @@
+# Normaliza fim de linha no repositorio, independente do core.autocrlf de quem
+# clona. Sem isto, um clone feito no Windows commita CRLF e o Linux quebra com
+#
+#     bash: ./instalar-linux.sh: /usr/bin/env bash^M: bad interpreter
+#
+# porque o shebang passa a apontar pra "bash\r", que nao existe.
+
+* text=auto eol=lf
+
+# Estes PRECISAM de LF: sao executados pelo shebang no Linux.
+*.sh text eol=lf
+
+# Scripts do PowerShell so rodam no Windows; CRLF e o nativo deles.
+*.ps1 text eol=crlf
+
+*.py  text eol=lf
+*.ino text eol=lf
+*.h   text eol=lf
+*.md  text eol=lf

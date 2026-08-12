@@ -5,18 +5,29 @@
 
 #pragma once
 
+// O ESP8266 so fala 2.4 GHz. Em caso de duvida sobre qual rede usar, grave o
+// scan_wifi primeiro: tudo que ele listar e 2.4 por definicao.
+//
+//     ./gravar.sh -p nodemcu -s scan_wifi -m        (Linux)
+//     .\gravar.ps1 -Placa nodemcu -Sketch scan_wifi -Monitor   (Windows)
 #define WIFI_SSID    "nome-da-sua-rede"
 #define WIFI_SENHA   "senha-da-sua-rede"
 
-// IP da maquina rodando o tecla_fantasma.py.
+// Maquinas que rodam o tecla_fantasma.py, em ordem de preferencia.
 //
-// Reserve o IP no DHCP do roteador (por MAC). Se ele mudar, o ESP fica
-// mandando GET pro vazio e o unico sintoma e a Alexa dizer "ok" e nada
-// acontecer - falha silenciosa, chata de diagnosticar.
-#define PC_IP        "192.168.0.100"
+// Pode ter mais de uma: o ESP tenta uma por uma e usa a primeira que
+// responder, comecando pela que funcionou da ultima vez. Assim voce troca de
+// computador sem regravar o firmware, e so paga o timeout da maquina
+// desligada na primeira acionada depois da troca.
+//
+// Reserve os IPs por MAC no roteador. Se um mudar, o ESP manda GET pro vazio
+// e o sintoma e a Alexa responder "ok" sem nada acontecer.
+#define PC_HOSTS     {"192.168.0.100"}
+// exemplo com duas:  {"192.168.0.185", "192.168.0.190"}
+
 #define PC_PORTA     8127
 
-// Mesmo valor de TECLA_FANTASMA_TOKEN no PC. Sem isso o daemon responde 403.
+// Mesmo valor de TECLA_FANTASMA_TOKEN nas maquinas. Sem isso: 403.
 #define TOKEN        "troque-isto"
 
 // Nome que a Alexa vai ouvir: "Alexa, ligar interrogacao".
