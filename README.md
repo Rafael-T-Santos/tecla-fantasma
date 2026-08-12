@@ -85,6 +85,77 @@ perde a programação normal até reverter. Pra um teclado de verdade, sem
 software nenhum no PC e funcionando até na BIOS, o chip certo é um
 ATmega32u4 (Pro Micro / Leonardo) ou um ESP32-S3.
 
+## Linux (Ubuntu)
+
+> ⚠️ O backend Linux ainda **não foi testado em hardware real** — só a lógica
+> de parsing e montagem de comando, com mock. Trate esta seção como plano de
+> voo, não como caminho batido.
+
+No Windows o `SendInput` entrega o **caractere** e o layout não importa. No
+Linux não existe equivalente: no Wayland, injetar em outra janela é
+justamente o que o protocolo impede, e a única saída é `/dev/uinput` — um
+teclado virtual no nível do kernel, que fala **keycode**. O compositor aplica
+o layout depois. Ou seja, o layout volta a importar.
+
+Por isso o código usa `ydotool key` com keycode cru, e não `ydotool type`:
+o `type` mapeia caractere→tecla assumindo layout US. Pedir `?` a ele apertaria
+a tecla que no ABNT2 é o `;`, e sairia `:` na tela.
+
+```bash
+sudo apt install ydotool libxkbcommon-tools python3-serial
+
+# brltty (suporte a braille) sequestra dispositivos CH340: a placa aparece em
+# /dev/ttyUSB0 e SOME um segundo depois. Enlouquece muita gente.
+sudo apt remove brltty
+
+# acesso à serial e ao uinput
+sudo usermod -aG dialout $USER
+sudo groupadd -f uinput && sudo usermod -aG uinput $USER
+echo 'KERNEL=="uinput", GROUP="uinput", MODE="0660", OPTIONS+="static_node=uinput"' \
+  | sudo tee /etc/udev/rules.d/80-uinput.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+**Faça logout/login** — grupo novo não vale na sessão atual, e abrir outro
+terminal não resolve.
+
+Suba o daemon do ydotool e confira o mapa de teclas antes de tudo:
+
+```bash
+systemctl --user enable --now ydotoold   # ou só:  ydotoold &
+
+python3 injetor.py
+```
+
+Deve sair algo assim. **Confira antes de confiar** — é aqui que se descobre
+se o layout foi detectado certo:
+
+```
+backend: linux/ydotool
+mapa de teclas descoberto:
+  '/' -> keycode 89, mods nenhum
+  '?' -> keycode 89, mods [42]
+```
+
+Se vier `keycode 53`, ele resolveu pelo layout US e vai digitar errado —
+nesse caso o `gsettings get org.gnome.desktop.input-sources sources` não
+retornou `br+abnt2` e a detecção precisa de ajuste.
+
+Depois é igual ao Windows: `python3 tecla_fantasma.py`, com a placa em
+`/dev/ttyUSB0` (autodetectada).
+
+### Atalho global no Wayland
+
+Não existe `RegisterHotKey` aqui, e nenhum app captura tecla global — de
+propósito. Mas o endpoint HTTP resolve: cadastre um atalho customizado em
+**Configurações → Teclado → Atalhos personalizados** rodando
+
+```
+curl -s http://127.0.0.1:8127/k/interrogacao
+```
+
+O GNOME cuida da tecla, o daemon cuida da injeção.
+
 ## HTTP
 
 Escuta em `127.0.0.1:8127` por padrão.

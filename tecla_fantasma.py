@@ -6,17 +6,24 @@ Tres formas de acionar o mesmo injetor:
   2) Serial - botao fisico no Arduino Nano/Uno/Mega  <- o uso diario
   3) HTTP em localhost - pro NodeMCU / webcam / Alexa
 
-Python 3.8+, so Windows. pyserial e opcional (so pro item 2).
+Windows e Linux. Python 3.8+. pyserial e opcional (so pro item 2).
     python tecla_fantasma.py
+
+A injecao em si mora no injetor.py, um backend por plataforma. O atalho
+global (item 1) e so Windows: no Wayland nenhum app captura tecla global, e
+la o caminho e cadastrar um atalho do GNOME chamando o endpoint HTTP - veja
+o README.
 """
 
-import ctypes
-import ctypes.wintypes as w
 import sys
 import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, HTTPServer
+
+from injetor import criar_injetor
+
+WINDOWS = sys.platform == "win32"
 
 # ---------------------------------------------------------------- config
 
@@ -39,7 +46,7 @@ HOST = "127.0.0.1"  # veja NOTA DE REDE no final do arquivo antes de abrir pra L
 PORTA = 8127
 TOKEN = ""          # se HOST != 127.0.0.1, defina um token e mande ?token=...
 
-SERIAL_PORTA = None   # None = autodetecta. Ou fixe: "COM3"
+SERIAL_PORTA = None   # None = autodetecta. Ou fixe: "COM3" / "/dev/ttyUSB0"
 SERIAL_BAUD = 9600
 
 # VIDs de USB-serial comuns em placas Arduino, pro autodetect
@@ -52,73 +59,17 @@ _VIDS_ARDUINO = {
     0x10C4,  # CP210x - varios NodeMCU
 }
 
-# ---------------------------------------------------------- injecao (SendInput)
+# ------------------------------------------------------------------ injecao
 
-user32 = ctypes.WinDLL("user32", use_last_error=True)
-
-INPUT_KEYBOARD = 1
-KEYEVENTF_KEYUP = 0x0002
-KEYEVENTF_UNICODE = 0x0004
-
-
-class MOUSEINPUT(ctypes.Structure):
-    _fields_ = [("dx", w.LONG), ("dy", w.LONG), ("mouseData", w.DWORD),
-                ("dwFlags", w.DWORD), ("time", w.DWORD),
-                ("dwExtraInfo", w.WPARAM)]
-
-
-class KEYBDINPUT(ctypes.Structure):
-    _fields_ = [("wVk", w.WORD), ("wScan", w.WORD), ("dwFlags", w.DWORD),
-                ("time", w.DWORD), ("dwExtraInfo", w.WPARAM)]
-
-
-class HARDWAREINPUT(ctypes.Structure):
-    _fields_ = [("uMsg", w.DWORD), ("wParamL", w.WORD), ("wParamH", w.WORD)]
-
-
-class _INPUTUNION(ctypes.Union):
-    _fields_ = [("mi", MOUSEINPUT), ("ki", KEYBDINPUT), ("hi", HARDWAREINPUT)]
-
-
-class INPUT(ctypes.Structure):
-    _anonymous_ = ("u",)
-    _fields_ = [("type", w.DWORD), ("u", _INPUTUNION)]
+_INJETOR = None
 
 
 def digitar(texto):
-    """Injeta texto como Unicode puro - independe do layout do teclado.
-
-    Cada char vira um par down/up com KEYEVENTF_UNICODE, entao nao existe
-    'tecla fisica' envolvida: o Windows entrega o caractere direto pro app
-    em foco. Funciona igual em ABNT2, US-Intl, qualquer um.
-    """
-    eventos = []
-    for ch in texto:
-        for cp in _utf16_units(ch):
-            for flags in (KEYEVENTF_UNICODE,
-                          KEYEVENTF_UNICODE | KEYEVENTF_KEYUP):
-                ev = INPUT(type=INPUT_KEYBOARD)
-                ev.ki = KEYBDINPUT(wVk=0, wScan=cp, dwFlags=flags,
-                                   time=0, dwExtraInfo=0)
-                eventos.append(ev)
-
-    if not eventos:
-        return 0
-
-    arr = (INPUT * len(eventos))(*eventos)
-    enviados = user32.SendInput(len(eventos), arr, ctypes.sizeof(INPUT))
-    if enviados != len(eventos):
-        raise ctypes.WinError(ctypes.get_last_error())
-    return enviados
+    """Injeta texto na janela em foco, pelo backend da plataforma."""
+    return _INJETOR.digitar(texto)
 
 
-def _utf16_units(ch):
-    """Emojis e afins ocupam dois surrogates; SendInput quer um por evento."""
-    b = ch.encode("utf-16-le")
-    return [b[i] | (b[i + 1] << 8) for i in range(0, len(b), 2)]
-
-
-# ------------------------------------------------------------ atalhos globais
+# --------------------------------------------------- atalhos globais (Windows)
 
 MOD_ALT, MOD_CONTROL, MOD_SHIFT, MOD_WIN, MOD_NOREPEAT = 1, 2, 4, 8, 0x4000
 WM_HOTKEY = 0x0312
@@ -138,7 +89,17 @@ def _parse_mods(spec):
 
 
 def loop_atalhos():
-    """Registra os hotkeys e bombeia mensagens. Bloqueia a thread principal."""
+    """Registra os hotkeys e bombeia mensagens. Bloqueia a thread principal.
+
+    So Windows: RegisterHotKey e Win32, e no Wayland nao existe equivalente
+    de proposito - captura global de tecla e justamente o que o protocolo
+    impede. No Linux o atalho vai pelo GNOME chamando o HTTP (veja README).
+    """
+    # ctypes.wintypes nem importa fora do Windows, por isso o import e aqui
+    import ctypes
+    import ctypes.wintypes as w
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+
     registrados = {}
     for i, ((mods, tecla), texto) in enumerate(ATALHOS.items(), start=1):
         vk = ord(tecla.upper())
@@ -292,14 +253,25 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+    global _INJETOR
     print("Tecla Fantasma")
-    print("\nAtalhos:")
+
+    _INJETOR = criar_injetor()
+    print("injetor: %s" % _INJETOR.nome)
+
     servidor = HTTPServer((HOST, PORTA), Handler)
     threading.Thread(target=servidor.serve_forever, daemon=True).start()
     threading.Thread(target=loop_serial, daemon=True).start()
-    print("\nHTTP: http://%s:%d/  (Ctrl+C pra sair)\n" % (HOST, PORTA))
+    print("\nHTTP: http://%s:%d/  (Ctrl+C pra sair)" % (HOST, PORTA))
+
     try:
-        loop_atalhos()
+        if WINDOWS:
+            print("\nAtalhos:")
+            loop_atalhos()
+        else:
+            print("\nAtalho global: cadastre no GNOME chamando"
+                  " curl -s http://%s:%d/k/interrogacao\n" % (HOST, PORTA))
+            threading.Event().wait()   # so espera; serial e HTTP ja rodam
     except KeyboardInterrupt:
         pass
     finally:
