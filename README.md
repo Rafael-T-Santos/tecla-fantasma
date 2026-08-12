@@ -46,8 +46,29 @@ O `INPUT_PULLUP` interno segura o pino em HIGH; apertar puxa pra LOW.
 Debounce de 40 ms no firmware — sem isso o tremor do contato mecânico
 transforma um aperto em vários `?`.
 
-Grava `botao_interrogacao/botao_interrogacao.ino` na placa e roda o daemon.
-A porta COM é detectada sozinha pelo VID do chip USB-serial.
+Pra gravar:
+
+```powershell
+winget install ArduinoSA.CLI          # uma vez
+arduino-cli core install arduino:avr  # uma vez, ~200 MB
+
+.\gravar.ps1                          # detecta a porta e grava
+.\gravar.ps1 -Porta COM7              # ou força uma porta
+.\gravar.ps1 -SoCompilar              # só compila, sem placa plugada
+```
+
+Depois é só rodar o daemon — ele acha a porta COM sozinho pelo VID do chip
+USB-serial.
+
+O `gravar.ps1` cobre duas pegadinhas que custam meia hora de debug cada:
+
+- **Bootloader antigo.** Quase todo Nano clone fala 57600 baud, não 115200.
+  Com o FQBN padrão o upload morre em `stk500_recv(): programmer is not
+  responding`. O script tenta os dois, então você não precisa saber qual tem.
+- **Porta ocupada.** Se o daemon estiver rodando ele segura a COM aberta e o
+  `avrdude` não consegue gravar. O script detecta e avisa antes de tentar.
+
+Tamanho do firmware: 1960 bytes de flash (6%), 208 bytes de RAM (10%).
 
 ### Por que não um teclado USB de verdade
 
