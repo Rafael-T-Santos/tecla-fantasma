@@ -17,8 +17,13 @@ param(
     [string]$Placa = "nano",
     [string]$Porta,
     [string]$Sketch,
+    [int]$Baud,
+    [switch]$Monitor,
     [switch]$SoCompilar
 )
+
+# Baud do Serial.begin() de cada firmware. As AVR falam 9600, o ESP 115200.
+$BAUDS = @{ "nano" = 9600; "uno" = 9600; "mega" = 9600; "nodemcu" = 115200 }
 
 # Uno e Mega usam ATmega16u2 como ponte USB: o Windows reconhece nativamente,
 # sem driver. Nano clone usa CH340 e tem duas variantes de bootloader, por isso
@@ -126,7 +131,16 @@ foreach ($fqbn in $tentativas) {
     & $cli upload -p $Porta --fqbn $fqbn $SKETCH
     if ($LASTEXITCODE -eq 0) {
         Write-Host "`ngravado com sucesso [$fqbn]" -ForegroundColor Green
-        Write-Host "Agora: botao entre D2 e GND, e roda  python tecla_fantasma.py"
+        if ($Monitor) {
+            if (-not $Baud) { $Baud = $BAUDS[$Placa] }
+            Write-Host "abrindo o serial em $Porta a $Baud (Ctrl+C pra sair)`n"
+            # A placa acabou de resetar pelo upload; sem esse respiro o monitor
+            # abre no meio do boot e as primeiras linhas saem truncadas.
+            Start-Sleep -Milliseconds 800
+            & $cli monitor -p $Porta -c baudrate=$Baud
+        } else {
+            Write-Host "Pra ver a saida da placa:  .\gravar.ps1 -Placa $Placa -Monitor"
+        }
         exit 0
     }
     Write-Host "  falhou com $fqbn" -ForegroundColor Yellow
