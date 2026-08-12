@@ -87,9 +87,8 @@ ATmega32u4 (Pro Micro / Leonardo) ou um ESP32-S3.
 
 ## Linux (Ubuntu)
 
-> ⚠️ O backend Linux ainda **não foi testado em hardware real** — só a lógica
-> de parsing e montagem de comando, com mock. Trate esta seção como plano de
-> voo, não como caminho batido.
+> Verificado em Ubuntu 24.04.4, GNOME 46 no Wayland, teclado ABNT2 (layout
+> `br`), com Uno clone (CH340). O botão físico funciona ponta a ponta.
 
 No Windows o `SendInput` entrega o **caractere** e o layout não importa. No
 Linux não existe equivalente: no Wayland, injetar em outra janela é
@@ -97,64 +96,130 @@ justamente o que o protocolo impede, e a única saída é `/dev/uinput` — um
 teclado virtual no nível do kernel, que fala **keycode**. O compositor aplica
 o layout depois. Ou seja, o layout volta a importar.
 
-Por isso o código usa `ydotool key` com keycode cru, e não `ydotool type`:
-o `type` mapeia caractere→tecla assumindo layout US. Pedir `?` a ele apertaria
-a tecla que no ABNT2 é o `;`, e sairia `:` na tela.
+O backend é `InjetorUinput`, que abre `/dev/uinput` direto via `python3-evdev`.
+Sem daemon auxiliar e sem um subprocess por tecla.
 
 ```bash
-sudo apt install ydotool libxkbcommon-tools python3-serial
+sudo apt install python3-evdev libxkbcommon-tools python3-serial
 
-# brltty (suporte a braille) sequestra dispositivos CH340: a placa aparece em
-# /dev/ttyUSB0 e SOME um segundo depois. Enlouquece muita gente.
-sudo apt remove brltty
-
-# acesso à serial e ao uinput
-sudo usermod -aG dialout $USER
-sudo groupadd -f uinput && sudo usermod -aG uinput $USER
+# acesso ao uinput (injeção) e à serial (placa)
+sudo groupadd -f uinput
+sudo usermod -aG uinput,dialout $USER
 echo 'KERNEL=="uinput", GROUP="uinput", MODE="0660", OPTIONS+="static_node=uinput"' \
   | sudo tee /etc/udev/rules.d/80-uinput.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
 **Faça logout/login** — grupo novo não vale na sessão atual, e abrir outro
-terminal não resolve.
+terminal não resolve. Pra testar sem deslogar: `sg uinput -c 'python3 injetor.py'`.
 
-Suba o daemon do ydotool e confira o mapa de teclas antes de tudo:
+### Por que não `ydotool`
+
+O README antigo mandava usar `ydotool key` com keycode cru. Não dá, pelo menos
+não com o pacote do Ubuntu:
+
+- O 24.04 empacota a **0.1.8**, que espera **nome** de tecla (`shift+ro`). A
+  sintaxe `keycode:1` / `keycode:0` só existe da **1.0** pra frente.
+- O pacote não inclui o `ydotoold` — só `/usr/bin/ydotool`. Não há o que
+  habilitar com `systemctl --user enable ydotoold`.
+
+Sem o daemon, cada invocação cria um uinput novo e perde as primeiras teclas.
+Compilar a 1.0.4 do fonte resolveria; usar `/dev/uinput` direto resolve com
+menos peças. O `InjetorYdotool` continua no código como plano B pra quem já
+tem a 1.0+ instalada.
+
+### Confira o mapa de teclas antes de confiar
 
 ```bash
-systemctl --user enable --now ydotoold   # ou só:  ydotoold &
-
 python3 injetor.py
 ```
 
-Deve sair algo assim. **Confira antes de confiar** — é aqui que se descobre
-se o layout foi detectado certo:
-
 ```
-backend: linux/ydotool
+backend: linux/uinput
+layout ativo: ('br', None)
 mapa de teclas descoberto:
   '/' -> keycode 89, mods nenhum
   '?' -> keycode 89, mods [42]
+  '°' -> keycode 18, mods [100]
 ```
 
-Se vier `keycode 53`, ele resolveu pelo layout US e vai digitar errado —
-nesse caso o `gsettings get org.gnome.desktop.input-sources sources` não
-retornou `br+abnt2` e a detecção precisa de ajuste.
+Se o `?` vier com `keycode 53`, ele resolveu pelo layout US e vai digitar
+errado — a detecção precisa de ajuste.
 
-Depois é igual ao Windows: `python3 tecla_fantasma.py`, com a placa em
-`/dev/ttyUSB0` (autodetectada).
+Duas coisas que essa detecção esconde, e que custaram debug:
 
-### Atalho global no Wayland
+- **O `xkbcli how-to-type` quer codepoint, não caractere.** Passar `?` faz ele
+  imprimir o usage e sair diferente de zero; o código caía calado no mapa fixo
+  de ABNT2. Ficava *certo por coincidência* — a detecção de layout nunca rodava.
+  Agora manda `0x3F`.
+- **Ele responde com várias linhas.** No ABNT2 o `?` sai em `Shift+AB11` e
+  também em `AltGr+W`. Pegar a primeira linha daria AltGr+W. E linhas com
+  `Lock` só valem com Caps Lock ligado — o daemon não sabe o estado do Caps,
+  então são descartadas. O código junta os candidatos e escolhe o de menos
+  modificador, desempatando a favor do Shift.
+
+### brltty: não precisa remover
+
+Conselho comum na internet, e o README antigo repetia: remover o `brltty`
+porque ele sequestra CH340. No Ubuntu 24.04 (brltty 6.6) a regra é estreita:
+
+```
+ENV{PRODUCT}=="1a86/7523/*", ATTRS{idVendor}=="1a40", ATTRS{idProduct}=="0101", ...
+```
+
+Só dispara se o CH340 estiver atrás daquele hub USB específico que os displays
+braille usam. Placa Arduino comum não é afetada — confira com
+`ls -l /dev/ttyUSB0` alguns segundos depois de plugar antes de desinstalar
+suporte a braille da máquina.
+
+### Autostart
+
+```ini
+# ~/.config/systemd/user/tecla-fantasma.service
+[Unit]
+Description=Tecla Fantasma
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+WorkingDirectory=%h/Documentos/tecla-fantasma
+ExecStart=/usr/bin/python3 tecla_fantasma.py
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
+```
+
+```bash
+systemctl --user daemon-reload && systemctl --user enable --now tecla-fantasma
+journalctl --user -u tecla-fantasma -f
+```
+
+### Atalho global no Wayland: não resolvido
 
 Não existe `RegisterHotKey` aqui, e nenhum app captura tecla global — de
-propósito. Mas o endpoint HTTP resolve: cadastre um atalho customizado em
-**Configurações → Teclado → Atalhos personalizados** rodando
+propósito. O caminho óbvio é cadastrar um atalho customizado em
+**Configurações → Teclado → Atalhos personalizados** chamando
 
 ```
 curl -s http://127.0.0.1:8127/k/interrogacao
 ```
 
-O GNOME cuida da tecla, o daemon cuida da injeção.
+**Isso não funcionou nesta máquina.** O atalho dispara e o daemon injeta — o
+log mostra `http -> '?'` — mas nada aparece na tela. O mesmo endpoint chamado
+pelo botão físico funciona, então a injeção está boa; algo entre o `uinput` e
+a janela engole o caractere quando o gatilho é uma tecla.
+
+Hipótese não confirmada: com Ctrl+Alt segurados, o compositor lê o keycode
+injetado como `Ctrl+Alt+Shift+89`, que não é `?`. Tentei zerar os
+modificadores antes de injetar — pressiona+solta no teclado virtual, porque
+`solta` sozinho é filtrado pelo `input_handle_event()` do kernel quando o
+dispositivo nunca pressionou a tecla — e **não resolveu**. Pode ser o grab que
+o GNOME mantém enquanto o atalho está ativo.
+
+Fica em aberto. Não é bloqueante: o botão físico é o uso diário.
 
 ## HTTP
 
@@ -173,8 +238,8 @@ alguém determinado dentro da rede.
 
 ## Roadmap
 
-- [x] Injetor + atalho global
-- [x] Botão físico via serial (Arduino Nano)
+- [x] Injetor + atalho global (o atalho só no Windows — veja a seção Linux)
+- [x] Botão físico via serial (Arduino Nano/Uno)
 - [ ] Alexa via NodeMCU — o ESP8266 se anuncia como lâmpada Hue (`Espalexa`)
       e chama o endpoint HTTP. Roundtrip pela nuvem: 2–4 s. Boa demo,
       ruim pra escrever de verdade.

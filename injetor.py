@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 # Keycodes evdev usados aqui (/usr/include/linux/input-event-codes.h)
 KEY_LEFTSHIFT = 42
@@ -157,6 +158,88 @@ class InjetorYdotool:
         return len(texto)
 
 
+class InjetorUinput:
+    """Teclado virtual proprio via /dev/uinput, com python3-evdev.
+
+    Mesmo principio do ydotool - uinput fala KEYCODE, o compositor aplica o
+    layout - mas sem daemon nem subprocess por tecla. Preferido no Linux.
+
+    O ydotool que o Ubuntu 24.04 empacota (0.1.8) nao serve: ele espera nome
+    de tecla ("shift+ro"), a sintaxe "keycode:1" so existe da 1.0 pra frente,
+    e o pacote nem inclui o ydotoold. Sintaxe numerica confirmada em
+    Client/tool_key.c da 1.0.4.
+    """
+
+    nome = "linux/uinput"
+
+    # Faixa de um teclado AT padrao: KEY_ESC(1) ... KEY_COMPOSE(127).
+    #
+    # Nao declaro so as 3 teclas que uso. O libinput decide se um dispositivo
+    # E um teclado olhando as capacidades que ele anuncia; um device com tres
+    # teclas soltas pode ser classificado como outra coisa, e nesse caso o
+    # GNOME nao aplica layout nenhum nele - voltariamos ao layout US e o "?"
+    # sairia errado. Anunciando a faixa inteira nao ha ambiguidade.
+    # KEY_RO(89), KEY_LEFTSHIFT(42) e KEY_RIGHTALT(100) cabem todos aqui.
+    _TECLAS = range(1, 128)
+
+    def __init__(self, mapa=None):
+        try:
+            from evdev import UInput, ecodes
+            from evdev.uinput import UInputError
+        except ImportError:
+            raise ErroInjecao(
+                "python3-evdev nao encontrado. "
+                "Instale com: sudo apt install python3-evdev")
+
+        self._ecodes = ecodes
+        try:
+            self._ui = UInput({ecodes.EV_KEY: list(self._TECLAS)},
+                              name="tecla-fantasma")
+        # UInputError herda de Exception direto, NAO de OSError - precisa ser
+        # nomeada. E ela que aparece no caso comum: o _verify() do evdev checa
+        # existencia e permissao antes de abrir o device, e a mensagem dele ja
+        # separa "modulo nao carregado" de "sem permissao de escrita". Repasso
+        # em vez de chutar qual das duas foi.
+        except (UInputError, OSError) as e:
+            raise ErroInjecao(
+                "nao consegui abrir /dev/uinput (%s).\n"
+                "  Voce esta no grupo uinput e a regra de udev existe?\n"
+                "  Grupo novo nao vale na sessao atual - faca logout/login.\n"
+                "  Pra testar sem deslogar: "
+                "sg uinput -c 'python3 tecla_fantasma.py'" % e)
+
+        # O compositor descobre o teclado novo via udev, e isso nao e
+        # instantaneo. Escrever imediatamente depois de criar o device faz as
+        # primeiras teclas caírem no vazio - e exatamente o problema que o
+        # ydotoold existe pra resolver mantendo o device vivo. Aqui o device e
+        # criado uma vez, no boot do daemon, entao esse custo e pago uma vez
+        # so e ninguem percebe.
+        time.sleep(0.4)
+
+        self._mapa = mapa if mapa is not None else descobrir_mapa()
+
+    def digitar(self, texto):
+        EV_KEY = self._ecodes.EV_KEY
+        for ch in texto:
+            combo = self._mapa.get(ch)
+            if combo is None:
+                raise ErroInjecao(
+                    "nao sei que tecla produz %r neste layout. Rode "
+                    "`xkbcli how-to-type %r` e adicione em _ABNT2." % (ch, ch))
+            keycode, mods = combo
+
+            # Modificador desce antes e sobe depois da tecla. Um syn() so no
+            # fim: o compositor le o lote todo como um evento coerente.
+            for m in mods:
+                self._ui.write(EV_KEY, m, 1)
+            self._ui.write(EV_KEY, keycode, 1)
+            self._ui.write(EV_KEY, keycode, 0)
+            for m in reversed(mods):
+                self._ui.write(EV_KEY, m, 0)
+            self._ui.syn()
+        return len(texto)
+
+
 def descobrir_mapa(chars=("?", "/", "°")):
     """Descobre keycode+modificadores de cada caractere no layout ATIVO.
 
@@ -223,7 +306,13 @@ def _perguntar_xkbcli(ch, layout=None, variante=None):
         cmd += ["--layout", layout]
     if variante:
         cmd += ["--variant", variante]
-    cmd.append(ch)
+
+    # CODEPOINT, nao o caractere. O xkbcli quer "<unicode codepoint/keysym>":
+    # passar "?" cru faz ele imprimir o usage e sair != 0, e ai a gente caía
+    # calado no _ABNT2 - o mapa ficava certo por coincidencia e a deteccao de
+    # layout que essa funcao existe pra fazer nunca rodava. Forma hex e a
+    # portavel entre versoes.
+    cmd.append("0x%X" % ord(ch))
 
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
@@ -233,30 +322,50 @@ def _perguntar_xkbcli(ch, layout=None, variante=None):
         return None
 
     # Tabela:  KEYCODE  KEY NAME  LAYOUT#  LAYOUT NAME  LEVEL#  MODIFIERS
-    #          97       <AB11>    1        Portuguese (Brazil)  2  [ Shift ]
+    #          97       AB11      1        Portuguese (Brazil)  2  [ Shift ]
     #
     # Nao da pra fatiar por coluna: "Portuguese (Brazil)" tem espaco e o
     # numero de colunas varia entre versoes. Ancoro no que e estavel - a
     # linha comeca com o keycode e os modificadores vem entre colchetes.
+    #
+    # Sao VARIAS linhas: no ABNT2 o "?" sai em Shift+AB11 e tambem em AltGr+W.
+    # Pegar a primeira daria AltGr+W. Junto todas e escolho a mais simples.
+    candidatos = []
     for linha in r.stdout.splitlines():
         m = re.match(r"\s*(\d+)\s", linha)
         if not m:
             continue
 
-        # xkb numera keycode com offset de 8 em relacao ao evdev - heranca do
-        # X11. O ydotool fala evdev, entao desconta.
-        keycode = int(m.group(1)) - 8
-
         colchetes = re.search(r"\[([^\]]*)\]", linha)
         texto_mods = (colchetes.group(1) if colchetes else "").lower()
+
+        # Linha com Lock so vale com Caps Lock LIGADO. Como o daemon nao sabe
+        # (nem controla) o estado do Caps, um combo desses acerta ou erra
+        # dependendo da hora. Descarto.
+        if "lock" in texto_mods:
+            continue
 
         mods = []
         if "shift" in texto_mods:
             mods.append(KEY_LEFTSHIFT)
-        if "level3" in texto_mods or "alt" in texto_mods or "mod5" in texto_mods:
+        # "mod5"/"level3" e o AltGr. Nao caso "alt" solto de proposito: Alt
+        # puro e Mod1, tecla diferente - trataria Alt como AltGr e erraria.
+        nivel3 = ("mod5" in texto_mods or "level3" in texto_mods
+                  or "levelthree" in texto_mods or "altgr" in texto_mods)
+        if nivel3:
             mods.append(KEY_RIGHTALT)
-        return keycode, mods
-    return None
+
+        # xkb numera keycode com offset de 8 em relacao ao evdev - heranca do
+        # X11. uinput e ydotool falam evdev, entao desconta.
+        candidatos.append((int(m.group(1)) - 8, mods))
+
+    if not candidatos:
+        return None
+
+    # Menos modificador primeiro; empate desempata a favor do Shift, que e
+    # universal, contra o AltGr, que depende do layout definir nivel 3.
+    candidatos.sort(key=lambda c: (len(c[1]), KEY_RIGHTALT in c[1]))
+    return candidatos[0]
 
 
 # ------------------------------------------------------------------ fabrica
@@ -265,7 +374,18 @@ def criar_injetor():
     if sys.platform == "win32":
         return InjetorWindows()
     if sys.platform.startswith("linux"):
-        return InjetorYdotool()
+        # uinput direto primeiro; ydotool como plano B pra quem ja tem o
+        # daemon de pe. Guardo o motivo da falha: se os dois caminhos
+        # morrerem, o erro do ydotool sozinho ("nao encontrado") esconderia a
+        # causa real, que quase sempre e permissao em /dev/uinput.
+        try:
+            return InjetorUinput()
+        except ErroInjecao as e:
+            primeiro = e
+        try:
+            return InjetorYdotool()
+        except ErroInjecao:
+            raise primeiro
     raise ErroInjecao("plataforma nao suportada: %s" % sys.platform)
 
 
@@ -273,7 +393,9 @@ if __name__ == "__main__":
     # Diagnostico: python injetor.py
     inj = criar_injetor()
     print("backend:", inj.nome)
-    if isinstance(inj, InjetorYdotool):
+    mapa = getattr(inj, "_mapa", None)
+    if mapa:
+        print("layout ativo: %s" % (layout_ativo(),))
         print("mapa de teclas descoberto:")
-        for ch, (kc, mods) in sorted(inj._mapa.items()):
+        for ch, (kc, mods) in sorted(mapa.items()):
             print("  %r -> keycode %d, mods %s" % (ch, kc, mods or "nenhum"))
