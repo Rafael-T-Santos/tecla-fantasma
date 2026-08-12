@@ -33,7 +33,7 @@ if ! command -v apt-get >/dev/null; then
   exit 1
 fi
 
-echo "==> 1/5  pacotes"
+echo "==> 1/6  pacotes"
 # python3-evdev  = o backend de injecao (obrigatorio)
 # libxkbcommon-tools = xkbcli, descobre o keycode no layout ATIVO (recomendado:
 #                      sem ele o codigo cai num mapa fixo de ABNT2)
@@ -41,7 +41,7 @@ echo "==> 1/5  pacotes"
 sudo apt-get install -y python3-evdev libxkbcommon-tools python3-serial
 
 echo
-echo "==> 2/5  modulo uinput"
+echo "==> 2/6  modulo uinput"
 # Em muitos kernels (incluindo o do Ubuntu) uinput e builtin e nao ha nada a
 # fazer. Onde for modulo, garante o carregamento no boot - senao /dev/uinput
 # some no proximo reboot e a injecao para.
@@ -54,7 +54,7 @@ else
 fi
 
 echo
-echo "==> 3/5  grupos"
+echo "==> 3/6  grupos"
 # uinput  -> escrever em /dev/uinput (injetar)
 # dialout -> abrir /dev/ttyUSB* ou /dev/ttyACM* (ler a placa)
 sudo groupadd -f uinput
@@ -62,7 +62,7 @@ sudo usermod -aG uinput,dialout "$USER"
 echo "    $USER agora nos grupos: uinput, dialout"
 
 echo
-echo "==> 4/5  regra de udev pro /dev/uinput"
+echo "==> 4/6  regra de udev pro /dev/uinput"
 # Sem isso o device nasce root:root 0600 a cada boot e so root injeta.
 echo 'KERNEL=="uinput", GROUP="uinput", MODE="0660", OPTIONS+="static_node=uinput"' \
   | sudo tee /etc/udev/rules.d/80-uinput.rules >/dev/null
@@ -71,7 +71,29 @@ sudo udevadm trigger
 echo "    $(ls -l /dev/uinput)"
 
 echo
-echo "==> 5/5  autostart"
+echo "==> 5/6  variaveis de ambiente"
+# systemd --user NAO le ~/.profile nem ~/.bashrc - so o shell le. Exportar la
+# funciona quando voce roda o daemon na mao e NAO chega no servico: ele subiria
+# em 127.0.0.1 sem token, o NodeMCU nunca alcancaria, e o sintoma seria a Alexa
+# dizer "ok" sem nada acontecer. Por isso um EnvironmentFile explicito.
+ENVFILE="$HOME/.config/tecla-fantasma.env"
+if [ ! -f "$ENVFILE" ]; then
+  mkdir -p "$(dirname "$ENVFILE")"
+  cat > "$ENVFILE" <<'ENVEOF'
+# Formato do systemd: CHAVE=valor. Sem "export", sem aspas.
+# Descomente as duas linhas pra aceitar gatilho vindo da rede (NodeMCU/Alexa).
+#TECLA_FANTASMA_HOST=0.0.0.0
+#TECLA_FANTASMA_TOKEN=troque-isto
+ENVEOF
+  chmod 600 "$ENVFILE"
+  echo "    criado: $ENVFILE"
+  echo "    (edite pra ligar a Alexa; 600 porque leva o token)"
+else
+  echo "    ja existe, mantido: $ENVFILE"
+fi
+
+echo
+echo "==> 6/6  autostart"
 if [ "$SERVICO" -eq 1 ]; then
   UNIT="$HOME/.config/systemd/user/tecla-fantasma.service"
   mkdir -p "$(dirname "$UNIT")"
@@ -87,6 +109,8 @@ PartOf=graphical-session.target
 WorkingDirectory=$REPO
 ExecStart=/usr/bin/python3 tecla_fantasma.py
 Environment=PYTHONUNBUFFERED=1
+# O "-" faz o systemd nao falhar se o arquivo nao existir.
+EnvironmentFile=-$ENVFILE
 Restart=on-failure
 RestartSec=3
 

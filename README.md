@@ -264,9 +264,24 @@ setx TECLA_FANTASMA_HOST  "0.0.0.0"
 setx TECLA_FANTASMA_TOKEN "algo-aleatorio-e-longo"   # abra um terminal novo depois
 ```
 
+No Linux **não use `~/.profile` pra isso**. O `systemd --user` não lê
+`~/.profile` nem `~/.bashrc` — só o shell lê. Exportar lá funciona quando você
+roda o daemon na mão e não chega no serviço: ele sobe em `127.0.0.1` sem token,
+o NodeMCU nunca alcança, e o sintoma é a Alexa dizer "ok" sem nada acontecer.
+
+O `instalar-linux.sh` cria `~/.config/tecla-fantasma.env` (modo 600, porque
+leva o token) e o unit o carrega via `EnvironmentFile`. Descomente as duas
+linhas:
+
 ```bash
-export TECLA_FANTASMA_HOST=0.0.0.0                    # no ~/.profile pro systemd ver
-export TECLA_FANTASMA_TOKEN=algo-aleatorio-e-longo
+# ~/.config/tecla-fantasma.env  -- formato do systemd: sem "export", sem aspas
+TECLA_FANTASMA_HOST=0.0.0.0
+TECLA_FANTASMA_TOKEN=algo-aleatorio-e-longo
+```
+
+```bash
+systemctl --user restart tecla-fantasma
+systemctl --user show tecla-fantasma -p Environment   # confere que pegou
 ```
 
 O daemon avisa em vermelho se você abrir pra rede sem token.
