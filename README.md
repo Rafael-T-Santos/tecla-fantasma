@@ -100,6 +100,14 @@ O backend é `InjetorUinput`, que abre `/dev/uinput` direto via `python3-evdev`.
 Sem daemon auxiliar e sem um subprocess por tecla.
 
 ```bash
+./instalar-linux.sh                 # deps + permissões + autostart
+./instalar-linux.sh --sem-servico   # sem o autostart
+```
+
+É idempotente e pede sudo só onde precisa — rode como seu usuário, não com
+`sudo` na frente (senão os grupos vão pro root). Se preferir na mão:
+
+```bash
 sudo apt install python3-evdev libxkbcommon-tools python3-serial
 
 # acesso ao uinput (injeção) e à serial (placa)
@@ -109,6 +117,10 @@ echo 'KERNEL=="uinput", GROUP="uinput", MODE="0660", OPTIONS+="static_node=uinpu
   | sudo tee /etc/udev/rules.d/80-uinput.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
+
+No kernel do Ubuntu o `uinput` é **builtin**, então não há módulo pra carregar.
+Onde for módulo, o script registra em `/etc/modules-load.d/` — sem isso
+`/dev/uinput` some no próximo boot e a injeção para.
 
 **Faça logout/login** — grupo novo não vale na sessão atual, e abrir outro
 terminal não resolve. Pra testar sem deslogar: `sg uinput -c 'python3 injetor.py'`.
@@ -174,6 +186,10 @@ suporte a braille da máquina.
 
 ### Autostart
 
+O `instalar-linux.sh` já escreve e habilita o unit abaixo, com o
+`WorkingDirectory` apontando pro diretório onde ele mesmo está — então
+funciona em qualquer caminho de clone.
+
 ```ini
 # ~/.config/systemd/user/tecla-fantasma.service
 [Unit]
@@ -182,7 +198,7 @@ After=graphical-session.target
 PartOf=graphical-session.target
 
 [Service]
-WorkingDirectory=%h/Documentos/tecla-fantasma
+WorkingDirectory=/caminho/do/clone
 ExecStart=/usr/bin/python3 tecla_fantasma.py
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
@@ -193,9 +209,12 @@ WantedBy=graphical-session.target
 ```
 
 ```bash
-systemctl --user daemon-reload && systemctl --user enable --now tecla-fantasma
+systemctl --user status tecla-fantasma
 journalctl --user -u tecla-fantasma -f
 ```
+
+Depois disso, reboot não exige nada: `uinput` é builtin, a regra de udev vive
+em `/etc/udev/rules.d/`, os grupos em `/etc/group`, e o unit sobe no login.
 
 ### Atalho global no Wayland: não resolvido
 
