@@ -240,9 +240,86 @@ o GNOME mantém enquanto o atalho está ativo.
 
 Fica em aberto. Não é bloqueante: o botão físico é o uso diário.
 
+## Alexa (NodeMCU / ESP8266)
+
+> ⚠️ O firmware **compila** (295 KB, 28% do flash) mas ainda não foi testado
+> com uma Alexa de verdade.
+
+O ESP se anuncia na rede como uma lâmpada Philips Hue. A Alexa descobre lâmpada
+Hue sozinha — sem skill, sem conta, sem cadastro. Você diz *"Alexa, ligar
+interrogação"*, ela manda "ligar" pro ESP, e o ESP chama o endpoint HTTP do
+daemon.
+
+**Latência de 2 a 4 segundos**, porque o reconhecimento de voz vai pra nuvem da
+Amazon e volta; só o último trecho é local. É demo, não ferramenta — o botão
+físico continua sendo o uso diário.
+
+### Passo a passo
+
+**1. Abra o daemon pra rede.** Ele escuta em `127.0.0.1` por padrão, e o ESP não
+alcança isso. O token deixa de ser opcional aqui:
+
+```powershell
+setx TECLA_FANTASMA_HOST  "0.0.0.0"
+setx TECLA_FANTASMA_TOKEN "algo-aleatorio-e-longo"   # abra um terminal novo depois
+```
+
+```bash
+export TECLA_FANTASMA_HOST=0.0.0.0                    # no ~/.profile pro systemd ver
+export TECLA_FANTASMA_TOKEN=algo-aleatorio-e-longo
+```
+
+O daemon avisa em vermelho se você abrir pra rede sem token.
+
+**2. Libere a porta no firewall.** Sem isso o ESP não alcança o PC, e o sintoma
+é a Alexa responder "ok" e nada acontecer:
+
+```powershell
+New-NetFirewallRule -DisplayName "Tecla Fantasma" -Direction Inbound `
+  -LocalPort 8127 -Protocol TCP -Action Allow -Profile Private
+```
+
+```bash
+sudo ufw allow from 192.168.0.0/24 to any port 8127 proto tcp
+```
+
+**3. Reserve o IP do PC no DHCP do roteador** (por MAC). Se o IP mudar, o ESP
+fica mandando GET pro vazio — falha silenciosa, chata de diagnosticar.
+
+**4. Configure e grave:**
+
+```powershell
+Copy-Item alexa_interrogacao\config.h.exemplo alexa_interrogacao\config.h
+# preencha wifi, IP do PC e o mesmo token
+.\gravar.ps1 -Placa nodemcu
+```
+
+O `config.h` está no `.gitignore` — ele carrega a senha do seu wifi e o token,
+e este repositório é público.
+
+**5. Descubra o dispositivo.** Abra o monitor serial a 115200 pra confirmar que
+o ESP conectou, e peça: *"Alexa, procurar dispositivos"*. Leva uns 45 s.
+
+### Se a Alexa achar mas não funcionar
+
+O serial do ESP diz qual dos três é:
+
+| No serial | Causa |
+|---|---|
+| `403` | `TOKEN` do `config.h` ≠ `TECLA_FANTASMA_TOKEN` do PC |
+| `nao alcancou <ip>:8127` | IP errado, daemon ainda em `127.0.0.1`, ou firewall |
+| `ok, PC digitou` | Chegou. O problema é da injeção, não da Alexa |
+
+### Por que o dispositivo se "desliga" sozinho
+
+`?` é ação momentânea, não uma luz que fica acesa. Depois de agir o firmware
+devolve o estado pra desligado — sem isso a Alexa acha que já está ligado e o
+segundo *"ligar interrogação"* não dispara nada.
+
 ## HTTP
 
-Escuta em `127.0.0.1:8127` por padrão.
+Escuta em `127.0.0.1:8127` por padrão (`TECLA_FANTASMA_HOST`,
+`TECLA_FANTASMA_PORTA` e `TECLA_FANTASMA_TOKEN` sobrescrevem).
 
 | Rota | O que faz |
 |---|---|
@@ -259,8 +336,6 @@ alguém determinado dentro da rede.
 
 - [x] Injetor + atalho global (o atalho só no Windows — veja a seção Linux)
 - [x] Botão físico via serial (Arduino Nano/Uno)
-- [ ] Alexa via NodeMCU — o ESP8266 se anuncia como lâmpada Hue (`Espalexa`)
-      e chama o endpoint HTTP. Roundtrip pela nuvem: 2–4 s. Boa demo,
-      ruim pra escrever de verdade.
+- [x] Alexa via NodeMCU — compila; falta testar com uma Alexa de verdade
 - [ ] Gesto pela webcam — por último. Falso positivo em gesto é fatal: você
       gesticula falando ao telefone e aparecem `?????` no documento.

@@ -1,0 +1,27 @@
+// Copie este arquivo pra config.h e preencha. O config.h esta no .gitignore -
+// ele carrega a senha do seu wifi e o token, e este repo e publico.
+//
+//     cp config.h.exemplo config.h
+
+#pragma once
+
+#define WIFI_SSID    "nome-da-sua-rede"
+#define WIFI_SENHA   "senha-da-sua-rede"
+
+// IP da maquina rodando o tecla_fantasma.py.
+//
+// Reserve o IP no DHCP do roteador (por MAC). Se ele mudar, o ESP fica
+// mandando GET pro vazio e o unico sintoma e a Alexa dizer "ok" e nada
+// acontecer - falha silenciosa, chata de diagnosticar.
+#define PC_IP        "192.168.0.100"
+#define PC_PORTA     8127
+
+// Mesmo valor de TECLA_FANTASMA_TOKEN no PC. Sem isso o daemon responde 403.
+#define TOKEN        "troque-isto"
+
+// Nome que a Alexa vai ouvir: "Alexa, ligar interrogacao".
+//
+// Sem acento de proposito - o nome vai cru no protocolo Hue e acento aqui ja
+// deu problema de descoberta. Da pra renomear depois pelo app da Alexa, que
+// e onde o nome bonito importa.
+#define NOME_ALEXA   "interrogacao"

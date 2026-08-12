@@ -12,6 +12,9 @@ build/
 # Config local com token/porta - cada maquina tem o seu
 config_local.py
 
+# Senha do wifi e token do firmware da Alexa. O .exemplo fica versionado.
+config.h
+
 # Windows
 Thumbs.db
 desktop.ini

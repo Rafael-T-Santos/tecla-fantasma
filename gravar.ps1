@@ -13,9 +13,10 @@
 #>
 
 param(
-    [ValidateSet("nano", "uno", "mega")]
+    [ValidateSet("nano", "uno", "mega", "nodemcu")]
     [string]$Placa = "nano",
     [string]$Porta,
+    [string]$Sketch,
     [switch]$SoCompilar
 )
 
@@ -23,14 +24,23 @@ param(
 # sem driver. Nano clone usa CH340 e tem duas variantes de bootloader, por isso
 # so ele tem uma segunda tentativa.
 $FQBNS = @{
-    "nano" = @("arduino:avr:nano", "arduino:avr:nano:cpu=atmega328old")
-    "uno"  = @("arduino:avr:uno")
-    "mega" = @("arduino:avr:mega:cpu=atmega2560")
+    "nano"    = @("arduino:avr:nano", "arduino:avr:nano:cpu=atmega328old")
+    "uno"     = @("arduino:avr:uno")
+    "mega"    = @("arduino:avr:mega:cpu=atmega2560")
+    "nodemcu" = @("esp8266:esp8266:nodemcuv2")
+}
+
+# Cada placa tem seu firmware: as AVR levam o botao, o ESP leva a Alexa.
+$SKETCHES = @{
+    "nano"    = "botao_interrogacao"
+    "uno"     = "botao_interrogacao"
+    "mega"    = "botao_interrogacao"
+    "nodemcu" = "alexa_interrogacao"
 }
 
 $ErrorActionPreference = "Stop"
 
-$SKETCH = Join-Path $PSScriptRoot "botao_interrogacao"
+$SKETCH = Join-Path $PSScriptRoot $(if ($Sketch) { $Sketch } else { $SKETCHES[$Placa] })
 
 # Placa nao plugada nao e bug do script - nao merece stack trace na cara.
 function Erro($msg) {
@@ -78,6 +88,15 @@ $cli = Get-ArduinoCli
 Write-Host "arduino-cli: $cli"
 
 $tentativas = $FQBNS[$Placa]
+
+# O config.h nao esta no repo (leva senha de wifi e token). Sem ele o gcc
+# reclama de "config.h: No such file or directory", que nao diz o que fazer.
+$exemplo = Join-Path $SKETCH "config.h.exemplo"
+if ((Test-Path $exemplo) -and -not (Test-Path (Join-Path $SKETCH "config.h"))) {
+    Erro ("falta o config.h em $SKETCH`n" +
+          "  Copie o exemplo e preencha wifi, IP do PC e token:`n" +
+          "    Copy-Item '$exemplo' '$(Join-Path $SKETCH "config.h")'")
+}
 
 Write-Host "`nCompilando para $Placa..."
 & $cli compile --fqbn $tentativas[0] $SKETCH

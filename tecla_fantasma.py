@@ -15,6 +15,7 @@ la o caminho e cadastrar um atalho do GNOME chamando o endpoint HTTP - veja
 o README.
 """
 
+import os
 import sys
 import threading
 import time
@@ -42,9 +43,14 @@ APELIDOS = {
     "graus": "°",
 }
 
-HOST = "127.0.0.1"  # veja NOTA DE REDE no final do arquivo antes de abrir pra LAN
-PORTA = 8127
-TOKEN = ""          # se HOST != 127.0.0.1, defina um token e mande ?token=...
+# Veja NOTA DE REDE no fim do arquivo antes de abrir pra LAN.
+#
+# Vem do ambiente pra o token nao acabar num commit - este repo e publico:
+#   Windows    setx TECLA_FANTASMA_TOKEN "..."   (abra um terminal novo depois)
+#   Linux      export TECLA_FANTASMA_TOKEN=...   (no ~/.profile pro systemd ver)
+HOST = os.environ.get("TECLA_FANTASMA_HOST", "127.0.0.1")
+PORTA = int(os.environ.get("TECLA_FANTASMA_PORTA", "8127"))
+TOKEN = os.environ.get("TECLA_FANTASMA_TOKEN", "")
 
 SERIAL_PORTA = None   # None = autodetecta. Ou fixe: "COM3" / "/dev/ttyUSB0"
 SERIAL_BAUD = 9600
@@ -258,6 +264,11 @@ def main():
 
     _INJETOR = criar_injetor()
     print("injetor: %s" % _INJETOR.nome)
+
+    if HOST not in ("127.0.0.1", "localhost") and not TOKEN:
+        print("\n  [!] ESCUTANDO EM %s SEM TOKEN." % HOST)
+        print("      Qualquer dispositivo da sua rede pode digitar nesta")
+        print("      maquina. Defina TECLA_FANTASMA_TOKEN.")
 
     servidor = HTTPServer((HOST, PORTA), Handler)
     threading.Thread(target=servidor.serve_forever, daemon=True).start()
