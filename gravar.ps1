@@ -115,7 +115,13 @@ if (-not $Porta) {
     $Porta = Find-Porta $cli
 }
 if (-not $Porta) {
-    Erro "nenhuma placa encontrada. Pluga o Nano no USB, ou passa -Porta COM3."
+    Erro ("nenhuma placa encontrada. Pluga a placa ($Placa) no USB, ou passa" +
+          " -Porta COM3.`n" +
+          "  Se ela JA esta plugada, veja se o Windows reconheceu o chip USB:`n" +
+          "    Get-CimInstance Win32_PnPEntity | Where-Object" +
+          " { `$_.ConfigManagerErrorCode -ne 0 } | Select-Object Name, DeviceID`n" +
+          "  erro 28 = falta driver (CP2102 e CH340 usam drivers diferentes)`n" +
+          "  erro 43 = o Windows nem leu quem e o dispositivo: cabo ou solda")
 }
 
 # O daemon segura a porta COM aberta; o avrdude precisa dela livre.
